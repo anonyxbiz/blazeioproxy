@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name = "BlazeioProxy",
-    version = "0.0.0.1",
+    version = "0.0.1",
     description = "BlazeioProxy is a high-performance SOCKS5 proxy server that enables raw TCP protocol handling with zero-copy efficiency and enterprise-grade performance.",
     license = "MIT",
     author = "Anonyxbiz",
