@@ -21,6 +21,7 @@ io.Scope.web = io.App("0.0.0.0", 6000)
 from .Parsers.atyp1 import Parser as atyp1
 from .Parsers.atyp3 import Parser as atyp3
 from .Parsers.atyp4 import Parser as atyp4
+from .Debugging import *
 
 class Rjson:
     __slots__ = ()
@@ -44,8 +45,9 @@ class Main(Rjson,):
     block_hosts = ("0.0.0.0",)
     block_ports = (0,)
 
-    def __init__(app, test: (str, None, io.Utype) = None, debug: (bool, io.Utype, class_parser.Store) = False, auth_required: (bool, io.Utype, class_parser.Store) = False, port: (int, io.Utype) = io.Scope.web.ServerConfig.port, identifiers: (int, io.Unone) = 0):
-        io.set_from_args(app, locals(), (bool, int))
+    def __init__(app, debug: (bool, io.Utype, class_parser.Store) = False, auth_required: (bool, io.Utype, class_parser.Store) = False, port: (int, io.Utype) = io.Scope.web.ServerConfig.port):
+        io.set_from_args(app, locals(), (io.Utype,))
+        app.identifiers = 0
         io.Super(app).__init__()
         app.parsers = Parsers()
 
@@ -57,23 +59,36 @@ class Main(Rjson,):
         if r.store.host in app.block_hosts or r.store.port in app.block_ports:
             raise io.Err("Host blocked")
 
-    async def handle(app, client: io.BlazeioServerProtocol):
+    async def handle(app, r: io.BlazeioServerProtocol):
         app.identifiers += 1
-        client.identifier = app.identifiers
-        client.__perf_counter__ = io.perf_counter()
+        r.identifier = app.identifiers
+        r.__perf_counter__ = io.perf_counter()
 
-        app.validate(client)
+        if not app.debug:
+            app.validate(r)
+        else:
+            Debugger.validate(r)
+        
+        try:
+            async with io.BlazeioClient(host = r.store.host, port = r.store.port) as server:
+                # Once connected, notify client of the connection establishment
+                await r.writer(r.store.response)
 
-        async with io.BlazeioClient(host = client.store.host, port = client.store.port) as server:
-            # Once connected, notify client of the connection establishment
-            await client.writer(client.store.response)
+                if app.debug:
+                    r.store.debugger = Debugger(r, server)
+                    await r.store.debugger.debug()
+                    juggler = r.store.debugger.juggler
+                else:
+                    juggler = app.juggler
 
-            task = io.create_task(app.juggler(client, server)) # Create a task for moving bytes from server to client
-            try:
-                await app.juggler(server, client) # Await movement of bytes from client to server directly in this connection task
-            finally:
-                if not task.done():
-                    task.cancel()
+                task = io.create_task(juggler(r, server)) # Create a task for moving bytes from server to client
+                try:
+                    await juggler(server, r) # Await movement of bytes from client to server directly in this connection task
+                finally:
+                    if not task.done():
+                        task.cancel()
+        except (OSError,):
+            return
 
     async def parser(app, r: io.BlazeioServerProtocol):
         async for chunk in r:
@@ -126,9 +141,9 @@ class Main(Rjson,):
             await app.handler(r)
 
 class Test:
-    __slots__ = ("concurrency", "requests")
-    def __init__(app, concurrency: (int, str) = 10, requests: (int, str) = 1):
-        io.set_from_args(app, locals(), str)
+    __slots__ = ("test", "concurrency", "requests", "url")
+    def __init__(app, test: (bool, io.Utype, class_parser.Store) = None, concurrency: (int, io.Utype) = 1, requests: (int, io.Utype) = 1, url: (str, io.Utype) = "https://api.ipify.org/"):
+        io.set_from_args(app, locals(), io.Utype)
         io.ioConf.loop.create_task(app.runner())
 
     async def runner(app):
@@ -149,12 +164,13 @@ class Test:
     async def client(app, task_id: str):
         for i in range(int(app.requests)):
             # Send keepalive requests through the proxy
-            async with io.getSession.get("https://api.ipify.org", socks5proxy = io.ddict(host = "127.0.0.1", port = io.Scope.web.ServerConfig.port)) as resp:
+            async with io.getSession.get(app.url, socks5proxy = io.ddict(host = "127.0.0.1", port = io.Scope.web.ServerConfig.port)) as resp:
                 await io.plog.green(task_id, io.anydumps(io.ddict(host = resp.host, status_code = resp.status_code, data = await resp.data()), indent = 1))
 
 def entry_point():
-    args = class_parser.Parser(Main, io.Utype).args()
-    io.Scope.web.ServerConfig.port = int(args.port)
+    parser = class_parser.Parser((Main, Test), io.Utype)
+
+    io.Scope.web.ServerConfig.port = int(parser.args().port)
 
     if SO_REUSEPORT:
         io.Scope.web.sock().setsockopt(SOL_SOCKET, SO_REUSEPORT, 1)
@@ -168,9 +184,9 @@ def entry_point():
     io.Scope.web.sock().setsockopt(IPPROTO_TCP, TCP_KEEPCNT, 3)
 
     with io.Scope.web:
-        if args.test:
-            Test(*args.test.split(","))
-        io.Scope.web.attach(Main(**args))
+        if parser.args().test:
+            Test(**parser.args(Test))
+        io.Scope.web.attach(Main(**parser.args(Main)))
         io.Scope.web.runner()
 
 if __name__ == "__main__":
