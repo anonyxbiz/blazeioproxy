@@ -52,8 +52,11 @@ class Main(Rjson,):
         app.parsers = Parsers()
 
     async def juggler(app, source: io.BlazeioProtocol, dest: io.BlazeioProtocol):
-        async for chunk in source:
-            await dest.writer(chunk)
+        try:
+            async for chunk in source:
+                await dest.writer(chunk)
+        except (io.ClientDisconnected, io.Eof, io.ServerDisconnected, io.CloseConnection):
+            ...
 
     def validate(app, r: io.BlazeioServerProtocol):
         if r.store.host in app.block_hosts or r.store.port in app.block_ports:
