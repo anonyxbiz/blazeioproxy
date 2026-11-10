@@ -144,10 +144,29 @@ class Main(Rjson,):
             await app.handler(r)
 
 class Test:
-    __slots__ = ("test", "concurrency", "requests", "url")
-    def __init__(app, test: (bool, io.Utype, class_parser.Store) = None, concurrency: (int, io.Utype) = 1, requests: (int, io.Utype) = 1, url: (str, io.Utype) = "https://api.ipify.org/"):
+    def __init__(app, test: (bool, io.Utype, class_parser.Store) = None, testclient: (bool, io.Utype, class_parser.Store) = None, concurrency: (int, io.Utype) = 1, requests: (int, io.Utype) = 1, url: (str, io.Utype) = "http://127.0.0.1:6050"):
         io.set_from_args(app, locals(), io.Utype)
-        io.ioConf.loop.create_task(app.runner())
+
+        io.ioConf.loop.create_task(app.run_test_srv())
+
+        if app.testclient:
+            io.ioConf.loop.create_task(app.runner())
+
+    async def create_srv(app):
+        app.test_server = io.App((host := app.url[app.url.find("://") + 3:].split(":"))[0], int(host[1]), with_keepalive = True)
+
+        @app.test_server.add_route
+        async def _(r: io.BlazeioProtocol):
+            await r.writer(b'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-length: %d\r\n\r\n%b' % (len(data := r.ip_host), data.encode()))
+
+    async def run_test_srv(app):
+        await app.create_srv()
+        
+        srv_task = io.create_task(app.test_server.run())
+        
+        io.Scope.web.on_exit_middleware(app.test_server.shutdown)
+
+        await app.test_server
 
     async def runner(app):
         await io.Scope.web # Wait for server to start
@@ -156,8 +175,6 @@ class Test:
             await io.gather(*[app.client(str(i)) for i in range(int(app.concurrency))])
 
         io.getSession.pool().close() # Close all connections in the pool
-
-        await io.sleep(1)
 
         # Check if server has connections after closing all
         await io.plog.yellow(io.anydumps(io.ddict(server_connections = len([task for task in io.all_tasks(loop = io.ioConf.loop) if hasattr(task, "__BlazeioProtocol__")])))) # Log all active connections in the server
