@@ -1,17 +1,7 @@
 # ./__main__.py
 import Blazeio as io
 import Blazeio.Other.class_parser as class_parser
-from socket import inet_ntoa, inet_aton, inet_ntop, AF_INET6, SOL_SOCKET, IPPROTO_TCP, TCP_NODELAY, SHUT_RDWR, SO_KEEPALIVE, TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT
-
-try:
-    from socket import SO_REUSEPORT
-except ImportError:
-    SO_REUSEPORT = None
-
-try:
-    from socket import TCP_QUICKACK
-except ImportError:
-    TCP_QUICKACK = None
+from socket import inet_ntoa, inet_aton, inet_ntop, AF_INET6, SOL_SOCKET, IPPROTO_TCP, SHUT_RDWR
 
 io.ioConf.OUTBOUND_CHUNK_SIZE, io.ioConf.INBOUND_CHUNK_SIZE = 1024*100, 1024*100
 io.Scope.add_imports(globals()) # Add imports to Scope to be shared across modules
@@ -162,6 +152,8 @@ class Test:
     async def run_test_srv(app):
         await app.create_srv()
         
+        io.TCPOptimizer(app.test_server, so_reuseport = True)
+
         srv_task = io.create_task(app.test_server.run())
         
         io.Scope.web.on_exit_middleware(app.test_server.shutdown)
@@ -191,17 +183,8 @@ def entry_point():
     parser = class_parser.Parser((Main, Test), io.Utype)
 
     io.Scope.web.ServerConfig.port = int(parser.args().port)
-
-    if SO_REUSEPORT:
-        io.Scope.web.sock().setsockopt(SOL_SOCKET, SO_REUSEPORT, 1)
-    if TCP_QUICKACK:
-        io.Scope.web.sock().setsockopt(IPPROTO_TCP, TCP_QUICKACK, 1)
-
-    io.Scope.web.sock().setsockopt(IPPROTO_TCP, TCP_NODELAY, 1)
-    io.Scope.web.sock().setsockopt(SOL_SOCKET, SO_KEEPALIVE, 1)
-    io.Scope.web.sock().setsockopt(IPPROTO_TCP, TCP_KEEPIDLE, 30)
-    io.Scope.web.sock().setsockopt(IPPROTO_TCP, TCP_KEEPINTVL, 10)
-    io.Scope.web.sock().setsockopt(IPPROTO_TCP, TCP_KEEPCNT, 3)
+    
+    io.TCPOptimizer(io.Scope.web, so_reuseport = True)
 
     with io.Scope.web:
         if parser.args().test:
